@@ -1,0 +1,24 @@
+name: sigstore-conformance
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule: [{ cron: '0 6 * * *' }]
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [production, staging]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with: { otp-version: '27', rebar3-version: '3.27' }
+      - run: rebar3 escriptize
+      - uses: sigstore/sigstore-conformance@v0.0.29
+        with:
+          entrypoint: ${{ github.workspace }}/_build/default/bin/sigstore_conformance
+          environment: ${{ matrix.environment }}
+          # M0: nothing implemented yet; every test is expected to fail (strict xfail).
+          # Burn this list down milestone by milestone (SPEC.md §11).
+          xfail: "test_*"

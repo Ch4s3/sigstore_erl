@@ -1,0 +1,12 @@
+{application, sigstore_erl, [
+    {description,
+        "Dependency-free Sigstore client for Erlang/OTP: keyless signing and full bundle verification"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [kernel, stdlib, crypto, public_key, asn1, ssl, inets]},
+    {env, []},
+    {modules, []},
+    {licenses, ["Apache-2.0"]},
+    {links, [{"GitHub", "https://github.com/Ch4s3/sigstore_erl"}]},
+    {files, ["src", "include", "asn1", "priv", "rebar.config", "README.md", "LICENSE", "SPEC.md"]}
+]}.

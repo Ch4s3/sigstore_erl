@@ -1,6 +1,6 @@
 # sigstore_erl — a dependency-free Sigstore client for Erlang/OTP
 
-Status: DRAFT v0.1 (2026-09-24). Design spec; no code yet.
+Status: DRAFT v0.1 (2026-09-24). M0 skeleton in place (rebar3, escript, CI); no sigstore logic yet.
 
 ## 0. Why
 
@@ -89,7 +89,7 @@ this is a one-file swap. Decision deferred to Layer 3.
 sigstore_erl/
   rebar.config              # no deps; erl_opts; escript for conformance
   src/
-    sigstore.app.src
+    sigstore_erl.app.src   # OTP app name is sigstore_erl; module prefix sigstore_
     sigstore.erl            # public façade: sign/verify/trust helpers
     sigstore_bundle.erl     # Bundle model: parse/validate/emit JSON (v0.1–v0.3)
     sigstore_trust.erl      # TrustedRoot + SigningConfig models; selection by time/operator
@@ -119,8 +119,7 @@ sigstore_erl/
     trust/prod/trusted_root.json   # embedded snapshot (fallback / offline)
     trust/prod/signing_config.v0.2.json
     trust/staging/…                # same for sigstage.dev
-  conformance/
-    sigstore_conformance.erl       # escript entrypoint implementing cli_protocol.md
+    sigstore_conformance.erl # escript entrypoint (cli_protocol.md); lives in src/ so `rebar3 escriptize` picks it up
   test/
     *_SUITE.erl                    # Common Test; vectors under test/vectors/
     vectors/                       # copied conformance bundle-verify fixtures + unit vectors
