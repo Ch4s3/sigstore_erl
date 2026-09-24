@@ -321,9 +321,16 @@ Repeat for every T in signed times; any failure fails
 - Rebuild TBS: decode leaf as `plain`, drop that extension from
   `tbsCertificate.extensions`, re-encode `TBSCertificate` with
   `'OTP-PKIX'`/`public_key:pkix_encode('TBSCertificate', …, plain)`.
-  **Risk:** re-encoding must be byte-identical to Fulcio's DER (it should:
-  DER is canonical, but OTP's `plain` vs `otp` record round-trip has had
-  quirks). Test with real Fulcio certs early (milestone M2).
+  **Verified byte-faithful (2026-09-24, OTP 29.1):** `test/probes/sct_probe.erl`
+  decodes two real Fulcio leaves (conformance `happy-path-v0.3`, production;
+  `rekor2-happy-path`, staging), re-encodes the unmodified TBSCertificate
+  byte-identically (1979/1979 bytes), drops the SCT extension, rebuilds the
+  RFC 6962 signed struct and the embedded SCT signature **verifies** against
+  the CT log key from the respective trusted root. Implementation notes:
+  use `pkix_decode_cert(Der, plain)` and `pkix_encode('TBSCertificate', TBS, plain)`;
+  there is no standalone `Extension` encoder in `public_key`/`'OTP-PKIX'`, so
+  strip by filtering the record list, not by DER splicing; `der_decode('SubjectPublicKeyInfo', _)`
+  already yields `{namedCurve, OID}` parameters, do not decode them again.
 - Issuer = chain[0], unless it has the precert-signing EKU
   `1.3.6.1.4.1.11129.2.4.4` (then chain[1]). `issuerKeyHash = SHA-256(issuer SPKI DER)`.
 - Signed struct: `0x00 || 0x00 || ts(8) || 0x0001 || issuerKeyHash || len24(TBS) || TBS || u16(ext) || ext`.
@@ -573,10 +580,10 @@ Decided:
 - D4. Structural (not byte-exact) body cross-check by default; JCS available for byte-exact.
 - D5. Follow the conformance suite where it is stricter than the client spec (root cert in chain ⇒ reject).
 - D6. `tlogEntries` must have exactly one entry in Layer 0.
+- D7. SCT precert TBS is rebuilt via OTP `plain` record round-trip; proven byte-faithful on real Fulcio certs (§6.3). No DER-splice fallback needed.
 
 Open:
 - Q1. OTP floor 27 vs vendoring JSON for 25/26 — depends on hex/rebar3 support matrix (Layer 3 decision).
-- Q2. TBSCertificate re-encoding fidelity through OTP's ASN.1 for SCT (§6.3). Test in M2 with live Fulcio certs; fallback is a hand DER splice (drop one extension by offset).
 - Q3. Embedded trust-root refresh policy before TUF (M6) lands: ship a snapshot per release, warn if older than N days.
 - Q4. Package name on hex: `sigstore` (unclaimed as of writing — check) vs `sigstore_erl`.
 - Q5. Should the escript be shipped in the hex package (handy `sigstore verify` CLI) or stay CI-only?
