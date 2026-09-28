@@ -126,6 +126,12 @@ the same with `r3_`. Generated code (hex_core's gpb protobuf modules) is
   and runs the offline verify suite against the prefixed modules, so
   vendorability is CI-enforced rather than discovered by hex.
 - V8. Not vendored: `sigstore_conformance` (escript), test suites, scripts.
+- V9. **Two-hop chain.** hex_core vendors nothing today (maennchen, Slack
+  2026-09-28), so we would be its first vendored dependency: hex_core copies
+  us with a prefix, then hex (`mix_`) and rebar3 (`r3_`) re-vendor hex_core
+  and rewrite our names a second time. Our files and tokens therefore have
+  to be appended to *their* vendor lists too. The V7 test vendors twice
+  (`a_` then `b_a_`) to prove the double rewrite is lossless.
 
 ## 3. Repository layout
 
