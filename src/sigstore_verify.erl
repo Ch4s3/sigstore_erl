@@ -11,7 +11,8 @@
     sigstore:verify_opts()
 ) -> {ok, sigstore:verified()} | sigstore:error().
 verify(_Artifact, Bundle, _Root, _Policy, _Opts) when is_binary(Bundle) ->
-    case sigstore_bundle:from_json(Bundle) of
+    Config = maps:get(config, _Opts, sigstore:default_config()),
+    case sigstore_bundle:from_json(Config, Bundle) of
         {ok, Parsed} -> verify(_Artifact, Parsed, _Root, _Policy, _Opts);
         {error, _} = E -> E
     end;

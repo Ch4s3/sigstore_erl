@@ -5,6 +5,7 @@ sigstore.hrl
 sigstore.erl
 sigstore_bundle.erl
 sigstore_json.erl
+sigstore_json_otp.erl
 sigstore_policy.erl
 sigstore_sign.erl
 sigstore_trust.erl

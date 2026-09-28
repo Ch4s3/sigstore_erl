@@ -1,19 +1,50 @@
-%% @doc JSON codec. OTP floor is 25 (hex_core vendoring, SPEC.md §2a), so the
-%% OTP 27 `json' module cannot be used. M0 stub delegates to it; M1 replaces
-%% the body with a self-contained codec keeping this exact interface.
-%% TODO(M1): own decoder/encoder; remove the `json' dependency.
+%% @doc JSON decoding behaviour and dispatch (SPEC.md §8.5).
+%%
+%% Only decoding is pluggable. All JSON *output* is produced by
+%% `sigstore_jcs' (deterministic, RFC 8785 sorted keys), which is valid JSON
+%% and needs no external codec. Decoding dispatches through the config map:
+%%
+%% ```
+%% #{json_adapter => {Module, AdapterConfig}}
+%% '''
+%%
+%% The default adapter `sigstore_json_otp' uses OTP 27's `json' module when
+%% it is loaded and returns `{error, {json, unavailable}}' otherwise, in the
+%% same spirit as `mix hex.search'. Hosts on OTP 25/26 can plug any codec by
+%% implementing this behaviour, e.g. an Elixir host wrapping Jason:
+%%
+%% ```
+%% defmodule MyApp.SigstoreJason do
+%%   @behaviour :sigstore_json
+%%   def decode(bin, _cfg), do: Jason.decode(bin)
+%% end
+%% '''
+%%
+%% Decoded values must use: maps with binary keys, lists, binaries for
+%% strings, integers, floats, `true | false | null'.
 -module(sigstore_json).
 
--export([decode/1, encode/1]).
+-export([decode/2, default_adapter/0]).
 
--spec decode(binary()) -> {ok, term()} | {error, {json, term()}}.
-decode(Bin) when is_binary(Bin) ->
-    try
-        {ok, json:decode(Bin)}
+-export_type([value/0, adapter/0]).
+
+-type value() ::
+    #{binary() => value()} | [value()] | binary() | integer() | float() | boolean() | null.
+-type adapter() :: {module(), AdapterConfig :: map()}.
+
+-callback decode(binary(), AdapterConfig :: map()) -> {ok, value()} | {error, term()}.
+
+%% @doc Decode `Bin' using the adapter in `Config' (or the default one).
+-spec decode(map(), binary()) -> {ok, value()} | {error, {json, term()}}.
+decode(Config, Bin) when is_map(Config), is_binary(Bin) ->
+    {Mod, AdapterCfg} = maps:get(json_adapter, Config, default_adapter()),
+    try Mod:decode(Bin, AdapterCfg) of
+        {ok, _} = Ok -> Ok;
+        {error, Reason} -> {error, {json, Reason}};
+        Other -> {error, {json, {bad_adapter_return, Mod, Other}}}
     catch
-        error:Reason -> {error, {json, Reason}}
+        Class:Reason -> {error, {json, {adapter_crashed, Mod, Class, Reason}}}
     end.
 
--spec encode(term()) -> iodata().
-encode(Term) ->
-    json:encode(Term).
+-spec default_adapter() -> adapter().
+default_adapter() -> {sigstore_json_otp, #{}}.

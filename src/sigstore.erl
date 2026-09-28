@@ -4,9 +4,14 @@
 %% `Reason'. Nothing here raises across the API boundary.
 -module(sigstore).
 
--export([verify/3, sign/1, trusted_root/1, signing_config/1]).
+-export([default_config/0, verify/3, sign/1, trusted_root/1, signing_config/1]).
 
--export_type([artifact/0, trust_opts/0, verify_opts/0, sign_opts/0, verified/0, error/0]).
+-export_type([config/0, artifact/0, trust_opts/0, verify_opts/0, sign_opts/0, verified/0, error/0]).
+
+%% Config map threaded through every function, like `hex_core:config()'.
+-type config() :: #{
+    json_adapter => sigstore_json:adapter()
+}.
 
 -type artifact() ::
     {file, file:name_all()}
@@ -21,6 +26,7 @@
 }.
 
 -type verify_opts() :: #{
+    config => config(),
     trusted_root := sigstore_trust:trusted_root(),
     policy := sigstore_policy:t(),
     now => calendar:datetime()
@@ -45,6 +51,11 @@
 }.
 
 -type error() :: {error, {Stage :: atom(), Reason :: term()}}.
+
+%% @doc Default configuration: OTP `json' adapter (OTP 27+).
+-spec default_config() -> config().
+default_config() ->
+    #{json_adapter => sigstore_json:default_adapter()}.
 
 %% @doc Verify `Bundle' (JSON binary or parsed map) over `Artifact' offline.
 -spec verify(artifact(), binary() | map(), verify_opts()) -> {ok, verified()} | error().

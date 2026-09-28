@@ -79,12 +79,12 @@ Verified against OTP 29.1 on 2026-09-24 (`probe.erl` in scratch):
 | X.509 decode/encode | `public_key:pkix_decode_cert/2` (`otp` and `plain`), `public_key:pkix_encode/3`, `'OTP-PKIX'` | need re-encoding of TBSCertificate minus one extension for SCT |
 | CSR encode | `'PKCS-10'` ASN.1 module ships compiled | `CertificationRequest` |
 | CMS SignedData (RFC 3161 response wrapper) | `'CryptographicMessageSyntax-2009'` ships compiled | `TSTInfo` does **not** ship → hand-written DER walker (`sigstore_der`), no build-time asn1ct (§2a V3) |
-| JSON | none usable (OTP floor 25, see §2a) | own codec in `sigstore_json`; RFC 8785 canonicaliser on top |
+| JSON | `json` on OTP 27+, pluggable below (§8.5) | decode via adapter; ALL output via own `sigstore_jcs` serializer |
 | HTTPS | `httpc` + `ssl` with `public_key:cacerts_get()` | must set `verify_peer`, `cacerts`, SNI, `customize_hostname_check` explicitly; httpc defaults are insecure |
 | Path validation at arbitrary time | **not available**: `pkix_path_validation/3` uses `calendar:universal_time()` (pubkey_cert.erl:181) | we implement chain building + validation at time T ourselves (§6.4). Same choice sigstore-python made. |
 | base64 | `base64:encode/decode` | standard padded; also need url-safe for JWT |
 
-**OTP floor: 25**, dictated by hex's CI matrix (§2a V1). Own JSON codec.
+**OTP floor: 25**, dictated by hex's CI matrix (§2a V1). JSON decode is an adapter (§8.5).
 
 ## 2a. Vendoring into hex_core (hard constraints)
 
@@ -94,9 +94,10 @@ and a fixed list of module-name tokens is rewritten with `sed`. rebar3 does
 the same with `r3_`. Generated code (hex_core's gpb protobuf modules) is
 **checked in as source**. Therefore:
 
-- V1. **OTP floor is 25** (hex CI matrix: 25.3 → 29.0). `json` (OTP 27) is
-  out; ship our own ~250-line JSON codec in `sigstore_json` (Q1 resolved).
-  Also avoid: `binary:decode_hex` shape changes, `maps:groups_from_list`
+- V1. **OTP floor is 25** (hex CI matrix: 25.3 → 29.0). JSON decoding is
+  pluggable (§8.5): the default adapter uses OTP 27's `json` when loaded and
+  fails cleanly otherwise, following the `mix hex.search` precedent; hosts on
+  25/26 plug in their own codec. No codec is shipped. Also avoid: `binary:decode_hex` shape changes, `maps:groups_from_list`
   (25 ok), `public_key:cacerts_get/0` (25 ok), `crypto:hash/2` ed25519 (ok).
 - V2. **Flat `src/`** holding every vendorable `.erl` and `.hrl`
   (`-include("sigstore.hrl")`, never `-include_lib("sigstore_erl/…")`).
@@ -150,7 +151,8 @@ sigstore_erl/
     sigstore_dsse.erl       # DSSE PAE, envelope model
     sigstore_intoto.erl     # in-toto Statement v1 parse + subject match (minimal)
     sigstore_jcs.erl        # RFC 8785 canonical JSON (restricted, §8.3)
-    sigstore_json.erl       # own JSON codec (OTP 25 has no `json`), maps + binaries
+    sigstore_json.erl       # decode behaviour + dispatch via #{json_adapter => {Mod, Cfg}}
+    sigstore_json_otp.erl   # default adapter: OTP 27+ `json` if loaded, else clean error
     sigstore_der.erl        # minimal DER TLV walker (TSTInfo, SCT list, misc)
     sigstore_trust_embedded.erl # GENERATED, checked in: prod+staging trusted_root/signing_config
     sigstore_http.erl       # behaviour (request/5) + dispatch via config map
@@ -528,6 +530,31 @@ Floats ⇒ `{error, {jcs, float_unsupported}}`. Used for SET payload and for
 optional byte-exact leaf recomputation; structural comparison (§6.5.5) does
 not need it.
 
+### 8.5 JSON (`sigstore_json` behaviour, `sigstore_json_otp` adapter)
+
+hex_core has no JSON codec at all (its wire formats are ETF and protobuf);
+the only JSON in hex, `mix hex.search`, uses OTP 27's `json` when loaded and
+otherwise tells the user to upgrade. We do the same, one step more general:
+
+- **Decode** goes through `sigstore_json:decode(Config, Bin)`, dispatching on
+  `#{json_adapter => {Mod, Cfg}}` (same shape as `http_adapter`). The
+  behaviour has a single callback `decode(Bin, Cfg) -> {ok, Value} | {error, R}`.
+  Default `sigstore_json_otp`: `json:decode/1` if `code:ensure_loaded(json)`
+  succeeds, else `{error, {json, {unavailable, _}}}`. An Elixir host on OTP 26
+  supplies a three-line Jason wrapper; rebar3 could wrap its vendored codec.
+- **Encode is never pluggable.** Every byte of JSON we emit (bundles, Rekor
+  and Fulcio request bodies, SET payloads) is produced by `sigstore_jcs`, our
+  RFC 8785 serializer, which is deterministic, sorted-key, valid JSON. Sorted
+  keys are harmless to every consumer and mandatory for the SET, so one
+  serializer covers both. Floats are rejected (Sigstore never emits any).
+- Value model: maps with binary keys, lists, binaries, integers, floats,
+  `true | false | null`. Adapters must conform; the dispatcher wraps crashes
+  and bad returns into `{error, {json, _}}`.
+
+Consequence: on OTP 25/26 without a configured adapter, verify and sign
+return `{error, {json, {unavailable, _}}}` rather than being unavailable at
+compile time, so hex_core can still vendor and compile the code everywhere.
+
 ### 8.4 JWT (`sigstore_oidc`)
 
 Split on `.`, url-safe base64 decode part 2, JSON decode. No signature
@@ -586,7 +613,7 @@ Each milestone ends with the named conformance tests green in CI (using
 | M | Scope | Conformance targets |
 |---|---|---|
 | M0 | repo, rebar3, escript skeleton that exits 1, CI wiring with everything xfail'd | suite runs, report uploads |
-| M1 | own JSON codec + JCS, bundle/trust-root models, JSON normalisation, `sigstore_keys`, structural validation, vendorability test | `bundle-*_fail` structural fixtures |
+| M1 | JCS serializer, bundle/trust-root models, JSON normalisation, `sigstore_keys`, structural validation, vendorability test | `bundle-*_fail` structural fixtures |
 | M2 | x509 chain-at-time, leaf profile, Fulcio OIDs, policy, SCT, message signature | `happy-path-v0.2/0.3`, `signature-mismatch_fail`, `*-expired-certificate_fail`, `invalid-ct-key_fail`, `bundle-with-sct-with-extensions` |
 | M3 | merkle, checkpoint (v1+v2 key IDs, cosigs), SET, body cross-check, DSSE/in-toto | all `rekor2-checkpoint-*`, `inclusion-proof-*`, `set-*`, `wrong-hashedrekord-*`, `dsse-*`, `intoto-*`, `happy-path-v0.1`, managed-key |
 | M4 | RFC 3161 (asn1 module, CMS verify), TSA-based signed time | all `rekor2-timestamp-*`, `rekor2-*happy-path`, `trust-root-tsa-*`, CPython release bundles ⇒ **verify 100%** |
@@ -649,7 +676,8 @@ Decided:
 - D4. Structural (not byte-exact) body cross-check by default; JCS available for byte-exact.
 - D5. Follow the conformance suite where it is stricter than the client spec (root cert in chain ⇒ reject).
 - D6. `tlogEntries` must have exactly one entry in Layer 0.
-- D8. Vendoring constraints V1–V8 (§2a) are binding; OTP floor 25; own JSON codec; config-map + http_adapter behaviour mirroring hex_core.
+- D8. Vendoring constraints V1–V8 (§2a) are binding; OTP floor 25; config-map + `http_adapter`/`json_adapter` behaviours mirroring hex_core.
+- D9. JSON decode is pluggable with OTP 27 `json` as default (§8.5); no codec shipped; all encoding via own `sigstore_jcs`.
 - D7. SCT precert TBS is rebuilt via OTP `plain` record round-trip; proven byte-faithful on real Fulcio certs (§6.3). No DER-splice fallback needed.
 
 Open:

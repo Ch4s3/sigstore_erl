@@ -4,7 +4,7 @@
 
 -include("sigstore.hrl").
 
--export([from_json/1, to_json/1, media_type/1, version/1]).
+-export([from_json/2, media_type/1, version/1]).
 
 -export_type([t/0, version/0]).
 
@@ -12,9 +12,9 @@
 -type t() :: #{binary() => term()}.
 -type version() :: v0_1 | v0_2 | v0_3.
 
--spec from_json(binary()) -> {ok, t()} | {error, {bundle, term()}}.
-from_json(Bin) ->
-    case sigstore_json:decode(Bin) of
+-spec from_json(sigstore:config(), binary()) -> {ok, t()} | {error, {bundle, term()}}.
+from_json(Config, Bin) ->
+    case sigstore_json:decode(Config, Bin) of
         {ok, #{<<"mediaType">> := MT} = Map} ->
             case version(MT) of
                 {ok, _} -> {ok, Map};
@@ -25,10 +25,6 @@ from_json(Bin) ->
         {error, Reason} ->
             {error, {bundle, {malformed_json, Reason}}}
     end.
-
--spec to_json(t()) -> iodata().
-to_json(Bundle) ->
-    sigstore_json:encode(Bundle).
 
 -spec media_type(t()) -> binary().
 media_type(#{<<"mediaType">> := MT}) -> MT.
