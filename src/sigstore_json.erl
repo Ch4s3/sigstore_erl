@@ -1,10 +1,12 @@
-%% @doc Thin wrapper over OTP's `json'. Single swap point if an older OTP
-%% floor ever requires a vendored codec (SPEC.md §2, Q1).
+%% @doc JSON codec. OTP floor is 25 (hex_core vendoring, SPEC.md §2a), so the
+%% OTP 27 `json' module cannot be used. M0 stub delegates to it; M1 replaces
+%% the body with a self-contained codec keeping this exact interface.
+%% TODO(M1): own decoder/encoder; remove the `json' dependency.
 -module(sigstore_json).
 
 -export([decode/1, encode/1]).
 
--spec decode(binary()) -> {ok, json:decode_value()} | {error, {json, term()}}.
+-spec decode(binary()) -> {ok, term()} | {error, {json, term()}}.
 decode(Bin) when is_binary(Bin) ->
     try
         {ok, json:decode(Bin)}
@@ -12,6 +14,6 @@ decode(Bin) when is_binary(Bin) ->
         error:Reason -> {error, {json, Reason}}
     end.
 
--spec encode(json:encode_value()) -> iodata().
+-spec encode(term()) -> iodata().
 encode(Term) ->
     json:encode(Term).

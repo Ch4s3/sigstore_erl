@@ -8,5 +8,5 @@
     {modules, []},
     {licenses, ["Apache-2.0"]},
     {links, [{"GitHub", "https://github.com/Ch4s3/sigstore_erl"}]},
-    {files, ["src", "include", "asn1", "priv", "rebar.config", "README.md", "LICENSE", "SPEC.md"]}
+    {files, ["src", "scripts", "rebar.config", "README.md", "LICENSE", "SPEC.md"]}
 ]}.

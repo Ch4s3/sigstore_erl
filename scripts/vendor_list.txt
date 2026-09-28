@@ -1,0 +1,21 @@
+# Files (relative to src/) and module tokens for hex_core-style vendoring.
+# Consumed by scripts/vendor.sh and by the vendorability CT test (SPEC.md §2a V7).
+[files]
+sigstore.hrl
+sigstore.erl
+sigstore_bundle.erl
+sigstore_json.erl
+sigstore_policy.erl
+sigstore_sign.erl
+sigstore_trust.erl
+sigstore_verify.erl
+[tokens]
+sigstore:
+sigstore)
+sigstore.hrl
+sigstore_bundle
+sigstore_json
+sigstore_policy
+sigstore_sign
+sigstore_trust
+sigstore_verify
