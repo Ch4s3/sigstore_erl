@@ -19,6 +19,32 @@ jobs:
         with:
           entrypoint: ${{ github.workspace }}/_build/default/bin/sigstore_conformance
           environment: ${{ matrix.environment }}
-          # M0: nothing implemented yet; every test is expected to fail (strict xfail).
-          # Burn this list down milestone by milestone (SPEC.md §11).
-          xfail: "test_*"
+          # Strict xfail: a listed test that PASSES fails the run, so this list must
+          # be exact. `_fail` verify fixtures are NOT listed: rejecting them is
+          # already correct behaviour. Remove lines as milestones land (SPEC §11).
+          # Signing (M5):
+          xfail: >-
+            test_simple*
+            test_sign_*
+            test_verify_cpython_release_bundles*
+            test_verify[[]*-bundle-with-sct-with-extensions]
+            test_verify[[]*-happy-path-intoto-in-dsse-v3]
+            test_verify[[]*-happy-path-v0.1]
+            test_verify[[]*-happy-path-v0.2]
+            test_verify[[]*-happy-path-v0.3-new-mediaType]
+            test_verify[[]*-happy-path-v0.3]
+            test_verify[[]*-intoto-with-custom-trust-root]
+            test_verify[[]*-managed-key-and-trusted-root]
+            test_verify[[]*-managed-key-happy-path]
+            test_verify[[]*-rekor2-checkpoint-cosigned]
+            test_verify[[]*-rekor2-checkpoint-multiple-cosigs]
+            test_verify[[]*-rekor2-checkpoint-origin-not-first]
+            test_verify[[]*-rekor2-checkpoint-two-sigs-cosigned]
+            test_verify[[]*-rekor2-checkpoint-two-sigs-from-origin]
+            test_verify[[]*-rekor2-dsse-happy-path]
+            test_verify[[]*-rekor2-happy-path]
+            test_verify[[]*-rekor2-timestamp-with-embedded-cert]
+            test_verify[[]*-rekor2-timestamp-with-expired-cert-chain]
+            test_verify[[]*-rekor2-timestamp-without-embedded-cert]
+            test_verify[[]*-trust-root-tlog-validity-end-inclusive]
+            test_verify[[]*-trust-root-tsa-validity-end-inclusive]

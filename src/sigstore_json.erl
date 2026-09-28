@@ -24,7 +24,7 @@
 %% strings, integers, floats, `true | false | null'.
 -module(sigstore_json).
 
--export([decode/2, default_adapter/0]).
+-export([decode/2, default_adapter/0, strip_nulls/1]).
 
 -export_type([value/0, adapter/0]).
 
@@ -39,12 +39,22 @@
 decode(Config, Bin) when is_map(Config), is_binary(Bin) ->
     {Mod, AdapterCfg} = maps:get(json_adapter, Config, default_adapter()),
     try Mod:decode(Bin, AdapterCfg) of
-        {ok, _} = Ok -> Ok;
+        {ok, V} -> {ok, strip_nulls(V)};
         {error, Reason} -> {error, {json, Reason}};
         Other -> {error, {json, {bad_adapter_return, Mod, Other}}}
     catch
         Class:Reason -> {error, {json, {adapter_crashed, Mod, Class, Reason}}}
     end.
+
+%% @doc Proto3 JSON: `null' means "field not set". Remove null-valued object
+%% members recursively so parsers only ever see present or absent fields.
+-spec strip_nulls(value()) -> value().
+strip_nulls(M) when is_map(M) -> maps:fold(fun strip_member/3, #{}, M);
+strip_nulls(L) when is_list(L) -> [strip_nulls(V) || V <- L];
+strip_nulls(V) -> V.
+
+strip_member(_K, null, Acc) -> Acc;
+strip_member(K, V, Acc) -> Acc#{K => strip_nulls(V)}.
 
 -spec default_adapter() -> adapter().
 default_adapter() -> {sigstore_json_otp, #{}}.

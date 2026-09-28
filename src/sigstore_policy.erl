@@ -7,15 +7,16 @@
 
 -type t() ::
     {identity, Identity :: binary(), Issuer :: binary()}
-    | {key, public_key:der_encoded() | binary()}
+    | {key, sigstore_keys:key()}
     | {all_of, [t()]}
     | {any_of, [t()]}.
 
 -spec identity(binary(), binary()) -> t().
 identity(Identity, Issuer) -> {identity, Identity, Issuer}.
 
--spec key(binary()) -> t().
-key(PemOrDer) -> {key, PemOrDer}.
+%% @doc Managed-key verification: no certificate, signature checked with `Key'.
+-spec key(sigstore_keys:key()) -> t().
+key(Key) -> {key, Key}.
 
 -spec all_of([t()]) -> t().
 all_of(Ps) -> {all_of, Ps}.

@@ -22,8 +22,8 @@
         input := {file, file:name_all()} | {digest, sha256, binary()}
     }}.
 
-%% M0: run/1 stubs only ever return errors; drop this once sign/verify land.
--dialyzer({nowarn_function, main/1}).
+%% Until M2/M5, run/1 can only ever return errors; drop this when it can succeed.
+-dialyzer({nowarn_function, [main/1, run/1]}).
 
 -spec main([string()]) -> no_return().
 main(Args) ->
@@ -31,6 +31,8 @@ main(Args) ->
         {ok, Cmd} ->
             case run(Cmd) of
                 ok ->
+                    halt(0);
+                {ok, _} ->
                     halt(0);
                 {error, Reason} ->
                     io:format(standard_error, "error: ~0p~n", [Reason]),
@@ -41,11 +43,58 @@ main(Args) ->
             halt(2)
     end.
 
--spec run(cmd()) -> ok | {error, term()}.
+-spec run(cmd()) -> ok | {ok, term()} | {error, term()}.
 run({sign_bundle, _Opts}) ->
     {error, {sign, not_implemented}};
-run({verify_bundle, _Opts}) ->
-    {error, {verify, not_implemented}}.
+run({verify_bundle, #{bundle := BundlePath, policy := PolicySpec, input := Input} = Opts}) ->
+    Config = sigstore:default_config(),
+    TrustOpts =
+        case Opts of
+            #{trusted_root := TR} -> #{config => Config, trusted_root => {file, TR}};
+            #{staging := true} -> #{config => Config, instance => staging};
+            #{} -> #{config => Config, instance => production}
+        end,
+    maybe_chain([
+        fun(_) -> sigstore:trusted_root(TrustOpts) end,
+        fun(Root) ->
+            case load_policy(PolicySpec) of
+                {ok, P} -> {ok, {Root, P}};
+                E -> E
+            end
+        end,
+        fun({Root, Policy}) ->
+            case file:read_file(BundlePath) of
+                {ok, Bin} -> {ok, {Root, Policy, Bin}};
+                {error, R} -> {error, {bundle, {read, BundlePath, R}}}
+            end
+        end,
+        fun({Root, Policy, Bin}) ->
+            sigstore:verify(Input, Bin, #{config => Config, trusted_root => Root, policy => Policy})
+        end
+    ]).
+
+load_policy({identity, I, U}) ->
+    {ok, sigstore_policy:identity(I, U)};
+load_policy({key, Path}) ->
+    case file:read_file(Path) of
+        {ok, Pem} ->
+            case sigstore_keys:from_pem(Pem) of
+                {ok, K} -> {ok, sigstore_policy:key(K)};
+                E -> E
+            end;
+        {error, R} ->
+            {error, {key, {read, Path, R}}}
+    end.
+
+maybe_chain(Steps) ->
+    lists:foldl(
+        fun
+            (Step, {ok, Acc}) -> Step(Acc);
+            (_Step, Err) -> Err
+        end,
+        {ok, undefined},
+        Steps
+    ).
 
 %% Argument parsing is position-tolerant even though the suite guarantees order.
 -spec parse_args([string()]) -> {ok, cmd()} | {error, term()}.

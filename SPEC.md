@@ -1,6 +1,6 @@
 # sigstore_erl — a dependency-free Sigstore client for Erlang/OTP
 
-Status: DRAFT v0.1 (2026-09-24). M0 skeleton in place (rebar3, escript, CI); no sigstore logic yet.
+Status: DRAFT v0.1. M0 (skeleton, CI) and M1 (data models, structural validation) done; see docs/plans/M1.md. No cryptographic verification yet.
 
 ## 0. Why
 
@@ -196,10 +196,11 @@ tuple, never a string, so callers can pattern-match (`{error, {cert, expired}}`,
 %% ---- Trust material ----
 -type trusted_root()  :: #{…}.        % parsed trusted_root.json (map form, §5.2)
 -type signing_config():: #{…}.        % parsed signing_config.v0.2.json
--type trust_opts()    :: #{instance => production | staging,
-                           trusted_root => trusted_root() | file:name() | binary(),
-                           signing_config => signing_config() | file:name() | binary(),
-                           tuf => embedded | refresh | {cache_dir, file:name()}}.
+-type source()        :: {file, file:name_all()} | {json, binary()} | map().
+-type trust_opts()    :: #{config => config(),
+                           instance => production | staging,   % embedded snapshot
+                           trusted_root => source(),            % wins over instance
+                           signing_config => source()}.
 
 sigstore:trusted_root(trust_opts())   -> {ok, trusted_root()} | {error, _}.
 sigstore:signing_config(trust_opts()) -> {ok, signing_config()} | {error, _}.
@@ -247,14 +248,22 @@ protobuf-JSON field names, so `Bundle` maps are JSON-shaped and round-trip.
 
 ### 5.1 Bundle (`sigstore_bundle`)
 
-Internal representation = the proto3-JSON map, decoded with `json`, with
-these normalisations applied once at parse time and reversed at emit time:
+Internal representation is an atom-keyed, snake_case map (`sigstore_bundle:t()`),
+not the JSON-shaped map: a camelCase binary-keyed map holding already-decoded
+bytes looks exactly like raw JSON and invites double-decoding bugs (D3
+revised). Normalisations applied once at parse time, reversed at emit time:
 
 - `bytes` fields → decoded binaries (`rawBytes`, `signature`, `digest`,
   `keyId`, `rootHash`, `hashes[]`, `canonicalizedBody`, `signedEntryTimestamp`,
   `signedTimestamp`, `payload`, `sig`).
 - `int64` fields (`logIndex`, `integratedTime`, `treeSize`) → integers.
   Accept both JSON string and number on input; emit strings.
+- JSON `null` members are dropped before parsing (proto3: null = unset).
+  Real trust roots carry `"end": null` and `"checkpointKeyId": null`.
+- base64: standard or URL-safe, padded or not, `\r`/`\n` skipped (Go,
+  Python, and sigstore-rs all tolerate line breaks; a conformance fixture
+  carries `base64`-CLI line-wrapped output). Any other stray byte rejects.
+- Times are integer microseconds since the Unix epoch (`sigstore_time`).
 - Enums stay as binaries (`<<"SHA2_256">>`); validated against the registry.
 
 Parse-time structural validation (all produce `{error, {bundle, _}}`):
@@ -272,7 +281,8 @@ Parse-time structural validation (all produce `{error, {bundle, _}}`):
 | base64 decodes | `bundle-invalid-base64-signature_fail` |
 | v0.1 ⇒ `inclusionPromise` required; v0.2+ ⇒ `inclusionProof.checkpoint` required | `intoto-missing-inclusion-proof_fail`, `rekor2-no-inclusion-proof_fail` |
 | DSSE ⇒ exactly one signature | |
-| `kindVersion` ∈ {hashedrekord 0.0.1, dsse 0.0.1, hashedrekord 0.0.2}; else `{error,{bundle,{unsupported_entry, K, V}}}` | |
+| `kindVersion` ∈ {hashedrekord 0.0.1, dsse 0.0.1, hashedrekord 0.0.2, intoto 0.0.2}; else `{error,{bundle,{unsupported_entry, {K, V}}}}`. intoto 0.0.2 is deprecated Rekor v1, used by six v0.2 fixtures; parsed so they fail for the intended reason, verification support decided in M3 (Q7) | |
+| v0.2+ with no `inclusionPromise` and no RFC 3161 timestamp ⇒ no signed time source | `rekor2-no-timestamp_fail` |
 
 Emit: producer always writes `application/vnd.dev.sigstore.bundle.v0.3+json`,
 `verificationMaterial.certificate` (leaf only), padded base64, int64 as
@@ -678,7 +688,7 @@ are plain string comparisons against Fulcio certificate extensions.
 Decided:
 - D1. Hand-rolled chain validation (OTP cannot validate at a past time).
 - D2 (revised). Hand-written DER for RFC 3161 TSTInfo (no build-time asn1ct, §2a V3); OTP's CMS for the envelope.
-- D3. JSON-shaped maps as the internal model; no records at the API boundary.
+- D3 (revised in M1). Atom-keyed snake_case maps as the internal model; JSON-shaped binary-keyed maps only at the codec boundary; no records at the API boundary.
 - D4. Structural (not byte-exact) body cross-check by default; JCS available for byte-exact.
 - D5. Follow the conformance suite where it is stricter than the client spec (root cert in chain ⇒ reject).
 - D6. `tlogEntries` must have exactly one entry in Layer 0.
@@ -690,4 +700,5 @@ Open:
 - Q3. Embedded trust-root refresh policy before TUF (M6) lands: ship a snapshot per release, warn if older than N days.
 - Q4. Package name on hex: `sigstore` (unclaimed as of writing — check) vs `sigstore_erl`.
 - Q5. Should the escript be shipped in the hex package (handy `sigstore verify` CLI) or stay CI-only?
+- Q7. Support deprecated Rekor v1 `intoto 0.0.2` entries (six v0.2 fixtures, one happy path `intoto-with-custom-trust-root`) or xfail them permanently as the conformance README suggests? Decide in M3.
 - Q6. Threshold verification across multiple Rekor operators (v2 future) — API shape reserves `signed_times`/`log_entries` lists for it.
