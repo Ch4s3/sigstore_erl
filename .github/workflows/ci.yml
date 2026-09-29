@@ -6,11 +6,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        otp: ['25', '26', '27', '28']
+        otp: ['26', '27', '28']
+        rebar3: ['3.27']
+        include:
+          # rebar3 >= 3.25 no longer runs on OTP 25.
+          - otp: '25'
+            rebar3: '3.22.1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: erlef/setup-beam@v1
-        with: { otp-version: "${{ matrix.otp }}", rebar3-version: '3.27' }
+        with: { otp-version: "${{ matrix.otp }}", rebar3-version: "${{ matrix.rebar3 }}" }
       - run: rebar3 compile
       - run: rebar3 xref
       - run: rebar3 dialyzer
