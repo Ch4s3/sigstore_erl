@@ -1,6 +1,6 @@
 # sigstore_erl — a dependency-free Sigstore client for Erlang/OTP
 
-Status: DRAFT v0.1. M0-M3 done; see docs/plans/. Bundles without RFC 3161 timestamps verify end to end; bundles carrying timestamps end in `{error, {verify, {incomplete, [tsa]}}}` until M4.
+Status: DRAFT v0.1. M0-M4 done; see docs/plans/. Offline verification is complete and passes every verification test in sigstore-conformance except one deliberately unsupported deprecated entry type. Signing (M5) is next.
 
 ## 0. Why
 
@@ -459,12 +459,11 @@ Repeat for every T in signed times; any failure fails
   appear in some `subject[].digest.sha256` (`dsse-invalid-sig_fail`,
   `rekor2-dsse-invalid-sig_fail`, `happy-path-intoto-in-dsse-v3`).
 
-### 6.6a Milestone gating
+### 6.6a Rekor v2 key validity
 
-Until every step exists, a bundle needing an unimplemented step ends with
-`{error, {verify, {incomplete, Pending}}}` after all implemented steps pass,
-and never returns `{ok, _}`. Since M3 the tlog step runs before signed
-times: an integrated time counts only after its SET verifies.
+Entries without a verified SET (Rekor v2, or v1 without a promise) carry no
+signed time of their own. Their log key's `validFor` must cover every
+verified TSA time, inclusive.
 
 ### 6.7 Result
 
@@ -698,7 +697,7 @@ are plain string comparisons against Fulcio certificate extensions.
 
 Decided:
 - D1. Hand-rolled chain validation (OTP cannot validate at a past time).
-- D2 (revised). Hand-written DER for RFC 3161 TSTInfo (no build-time asn1ct, §2a V3); OTP's CMS for the envelope.
+- D2 (revised twice). Hand-written DER for the entire RFC 3161 token, CMS envelope included: no build-time asn1ct (§2a V3), and OTP's CMS module is named `'PKCS-7'` on OTP 25 but `'CryptographicMessageSyntax-2009'` on OTP 29.
 - D3 (revised in M1). Atom-keyed snake_case maps as the internal model; JSON-shaped binary-keyed maps only at the codec boundary; no records at the API boundary.
 - D4. Structural (not byte-exact) body cross-check by default; JCS available for byte-exact.
 - D5. Follow the conformance suite where it is stricter than the client spec (root cert in chain ⇒ reject).

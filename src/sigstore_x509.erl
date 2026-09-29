@@ -19,6 +19,7 @@
     san/1,
     fulcio_ext/2,
     issuer/1,
+    has_eku/2,
     validate_chain/4
 ]).
 
@@ -160,6 +161,9 @@ issuer(C) ->
                 undefined -> {error, {cert, no_issuer_extension}}
             end
     end.
+
+-spec has_eku(cert(), tuple()) -> boolean().
+has_eku(C, Oid) -> lists:member(Oid, ext_value(C, ?'id-ce-extKeyUsage', [])).
 
 %% @doc Build and validate a path from `Leaf' to a trust anchor at time `T'.
 %%

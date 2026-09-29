@@ -90,11 +90,10 @@ digest_inputs_agree(_) ->
         sigstore:verify({file, "/nonexistent"}, Bundle, Opts)
     ).
 
-%% Managed-key bundles signed with freshly generated keys (no tlog entry;
-%% a placeholder TSA token keeps the pipeline at `incomplete [tsa]' so the
-%% signature step runs): the verifier
-%% must pick the hash by key algorithm (Ed25519 signs the whole message,
-%% P-384 needs SHA-384, so a SHA-256 prehash input cannot work for either).
+%% The signature step with freshly generated keys, called directly (a
+%% synthetic bundle has no real log entry or timestamp to get it that far):
+%% the hash follows the key algorithm (Ed25519 signs the whole message,
+%% P-384 defaults to SHA-384), so a SHA-256 prehash input cannot work.
 ed25519_needs_whole_message(_) ->
     Msg = <<"hello sigstore">>,
     [
@@ -103,10 +102,8 @@ ed25519_needs_whole_message(_) ->
             Pub = {#'ECPoint'{point = Priv#'ECPrivateKey'.publicKey}, {namedCurve, CurveOid}},
             Key = #{alg => Alg, public_key => Pub, spki => <<>>},
             Sig = public_key:sign(Msg, SignHash, Priv),
-            Check = fun(Artifact, S) -> managed(Key, S, Artifact) end,
-            ?assertEqual(
-                {Alg, {error, {verify, {incomplete, [tsa]}}}}, {Alg, Check({binary, Msg}, Sig)}
-            ),
+            Check = fun(Artifact, S) -> sig_step(Key, S, undefined, Artifact) end,
+            ?assertEqual({Alg, ok}, {Alg, Check({binary, Msg}, Sig)}),
             ?assertEqual(
                 {Alg, {error, {signature, invalid}}},
                 {Alg, Check({binary, <<Msg/binary, "!">>}, Sig)}
@@ -122,20 +119,17 @@ ed25519_needs_whole_message(_) ->
         ]
     ].
 
-managed(Key, Sig, Artifact) ->
-    Bundle = #{
-        media_type => <<"application/vnd.dev.sigstore.bundle.v0.3+json">>,
-        version => v0_3,
-        material => {public_key, <<>>},
-        tlog_entries => [],
-        rfc3161_timestamps => [<<"placeholder">>],
-        content => {message_signature, #{signature => Sig, message_digest => undefined}}
+sig_step(Key, Sig, MD, Artifact) ->
+    Ctx = #{
+        bundle => #{content => {message_signature, #{signature => Sig, message_digest => MD}}},
+        key => Key,
+        artifact => Artifact,
+        config => sigstore_test_json:config()
     },
-    sigstore:verify(Artifact, Bundle, #{
-        config => sigstore_test_json:config(),
-        trusted_root => #{},
-        policy => sigstore_policy:key(Key)
-    }).
+    case sigstore_verify:signature(Ctx) of
+        {ok, _} -> ok;
+        E -> E
+    end.
 
 sct_list_parse(_) ->
     ?assertMatch({error, {sct, bad_list}}, sigstore_sct:parse_list(<<0, 5, 1>>)),
@@ -165,34 +159,11 @@ p384_key_sha256_prehash(_) ->
     Pub = {#'ECPoint'{point = Priv#'ECPrivateKey'.publicKey}, {namedCurve, ?'secp384r1'}},
     Key = #{alg => ecdsa_p384_sha384, public_key => Pub, spki => <<>>},
     Sig = public_key:sign({digest, D}, sha256, Priv),
-    Bundle = fun(MD) ->
-        #{
-            media_type => <<"application/vnd.dev.sigstore.bundle.v0.3+json">>,
-            version => v0_3,
-            material => {public_key, <<>>},
-            tlog_entries => [],
-            rfc3161_timestamps => [<<"placeholder">>],
-            content => {message_signature, #{signature => Sig, message_digest => MD}}
-        }
-    end,
-    Opts = #{
-        config => sigstore_test_json:config(),
-        trusted_root => #{},
-        policy => sigstore_policy:key(Key)
-    },
     Declared = #{algorithm => <<"SHA2_256">>, digest => D},
-    ?assertEqual(
-        {error, {verify, {incomplete, [tsa]}}},
-        sigstore:verify({digest, sha256, D}, Bundle(Declared), Opts)
-    ),
-    ?assertEqual(
-        {error, {verify, {incomplete, [tsa]}}},
-        sigstore:verify({binary, Msg}, Bundle(Declared), Opts)
-    ),
+    ?assertEqual(ok, sig_step(Key, Sig, Declared, {digest, sha256, D})),
+    ?assertEqual(ok, sig_step(Key, Sig, Declared, {binary, Msg})),
     %% Without a declared digest the key default (SHA-384) applies.
-    ?assertEqual(
-        {error, {signature, invalid}}, sigstore:verify({binary, Msg}, Bundle(undefined), Opts)
-    ).
+    ?assertEqual({error, {signature, invalid}}, sig_step(Key, Sig, undefined, {binary, Msg})).
 
 %% A real CPython 3.11.6 release bundle (P-384 key, SHA-256 digest,
 %% bundle v0.1, Google-issued identity) verifies end to end.

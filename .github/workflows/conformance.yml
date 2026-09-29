@@ -24,21 +24,8 @@ jobs:
           # already correct behaviour. Remove lines as milestones land (SPEC §11).
           # Permanent: intoto-with-custom-trust-root uses the deprecated Rekor v1
           # `intoto 0.0.2` entry type, not supported (SPEC Q7, as sigstore-python).
-          # Signing (test_simple, test_sign_*) lands in M5; the rest need M4 (TSA).
+          # Signing (test_simple, test_sign_*) lands in M5.
           xfail: >-
             test_simple*
             test_sign_*
             test_verify[[]*-intoto-with-custom-trust-root]
-            test_verify[[]*-bundle-with-sct-with-extensions]
-            test_verify[[]*-managed-key-happy-path]
-            test_verify[[]*-rekor2-checkpoint-cosigned]
-            test_verify[[]*-rekor2-checkpoint-multiple-cosigs]
-            test_verify[[]*-rekor2-checkpoint-origin-not-first]
-            test_verify[[]*-rekor2-checkpoint-two-sigs-cosigned]
-            test_verify[[]*-rekor2-checkpoint-two-sigs-from-origin]
-            test_verify[[]*-rekor2-dsse-happy-path]
-            test_verify[[]*-rekor2-happy-path]
-            test_verify[[]*-rekor2-timestamp-with-embedded-cert]
-            test_verify[[]*-rekor2-timestamp-with-expired-cert-chain]
-            test_verify[[]*-rekor2-timestamp-without-embedded-cert]
-            test_verify[[]*-trust-root-tsa-validity-end-inclusive]

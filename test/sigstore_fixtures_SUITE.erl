@@ -113,9 +113,9 @@ load(Config, Name) ->
     end.
 
 %% Where each fixture stops in the full verifier, reviewed against its
-%% README. `ok' = verifies end to end. `incomplete' = every implemented
-%% step passed and something is still pending (M4 TSA). No `_fail' fixture
-%% may ever be `ok'. Update deliberately as milestones land.
+%% README. `ok' = verifies end to end. No `_fail' fixture may ever be
+%% `ok'. The only non-`_fail' fixture not `ok' is intoto-with-custom-trust-
+%% root (deprecated entry type, SPEC D10). Update deliberately.
 stages() ->
     #{
         "bundle-empty-certificate-chain_fail" => {bundle, empty_certificate_chain},
@@ -127,7 +127,7 @@ stages() ->
             {bundle,
                 {unknown_media_type, <<"application/vnd.dev.sigstore.bundle+json;version=99.9">>}},
         "bundle-with-root-cert_fail" => {bundle, root_certificate_in_chain},
-        "bundle-with-sct-with-extensions" => {verify, {incomplete, [tsa]}},
+        "bundle-with-sct-with-extensions" => ok,
         "checkpoint-bad-keyhint_fail" => {tlog, {checkpoint, no_matching_signature}},
         "checkpoint-wrong-roothash_fail" => {tlog, checkpoint_does_not_match_proof},
         "dsse-invalid-sig_fail" => {tlog, {body, {mismatch, signature}}},
@@ -151,43 +151,43 @@ stages() ->
         "invalid-ct-key_fail" => {sct, bad_signature},
         "invalid-inclusion-proof_fail" => {bundle, missing_checkpoint},
         "managed-key-and-trusted-root" => ok,
-        "managed-key-happy-path" => {verify, {incomplete, [tsa]}},
+        "managed-key-happy-path" => ok,
         "managed-key-no-key_fail" => {policy, bundle_has_no_certificate},
         "managed-key-wrong-key_fail" => {tlog, {body, {mismatch, verifier}}},
         "message-digest-mismatch_fail" => {signature, message_digest_mismatch},
-        "rekor2-checkpoint-cosigned" => {verify, {incomplete, [tsa]}},
+        "rekor2-checkpoint-cosigned" => ok,
         "rekor2-checkpoint-missing-log-signature_fail" => {tlog, {checkpoint, no_signatures}},
         "rekor2-checkpoint-missing-origin_fail" => {tlog, {checkpoint, too_few_lines}},
         "rekor2-checkpoint-missing-root-hash_fail" => {tlog, {checkpoint, too_few_lines}},
         "rekor2-checkpoint-missing-size_fail" => {tlog, {checkpoint, too_few_lines}},
-        "rekor2-checkpoint-multiple-cosigs" => {verify, {incomplete, [tsa]}},
+        "rekor2-checkpoint-multiple-cosigs" => ok,
         "rekor2-checkpoint-no-matching-signature_fail" =>
             {tlog, {checkpoint, no_matching_signature}},
-        "rekor2-checkpoint-origin-not-first" => {verify, {incomplete, [tsa]}},
-        "rekor2-checkpoint-two-sigs-cosigned" => {verify, {incomplete, [tsa]}},
-        "rekor2-checkpoint-two-sigs-from-origin" => {verify, {incomplete, [tsa]}},
-        "rekor2-dsse-happy-path" => {verify, {incomplete, [tsa]}},
+        "rekor2-checkpoint-origin-not-first" => ok,
+        "rekor2-checkpoint-two-sigs-cosigned" => ok,
+        "rekor2-checkpoint-two-sigs-from-origin" => ok,
+        "rekor2-dsse-happy-path" => ok,
         "rekor2-dsse-invalid-sig_fail" => {tlog, {body, {mismatch, signature}}},
         "rekor2-dsse-mismatch-envelope_fail" => {tlog, {body, {mismatch, signature}}},
         "rekor2-dsse-mismatch-sig_fail" => {tlog, {body, {mismatch, signature}}},
-        "rekor2-happy-path" => {verify, {incomplete, [tsa]}},
+        "rekor2-happy-path" => ok,
         "rekor2-no-inclusion-proof_fail" => {bundle, missing_inclusion_proof},
         "rekor2-no-timestamp_fail" => {bundle, no_signed_time_source},
-        "rekor2-timestamp-outside-trust-root-tsa-validity_fail" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-outside-tsa-cert-validity_fail" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-payload-mismatch_fail" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-untrusted-tsa-with-embedded-cert_fail" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-untrusted-tsa-without-embedded-cert_fail" =>
-            {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-with-embedded-cert" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-with-expired-cert-chain" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-with-incorrect-time_fail" => {verify, {incomplete, [tsa]}},
-        "rekor2-timestamp-without-embedded-cert" => {verify, {incomplete, [tsa]}},
+        "rekor2-timestamp-outside-trust-root-tsa-validity_fail" => {tsa, no_trusted_tsa_at_time},
+        "rekor2-timestamp-outside-tsa-cert-validity_fail" =>
+            {tsa, {chain, {expired_or_not_yet_valid, 0}}},
+        "rekor2-timestamp-payload-mismatch_fail" => {tsa, message_imprint_mismatch},
+        "rekor2-timestamp-untrusted-tsa-with-embedded-cert_fail" => {tsa, invalid_signature},
+        "rekor2-timestamp-untrusted-tsa-without-embedded-cert_fail" => {tsa, invalid_signature},
+        "rekor2-timestamp-with-embedded-cert" => ok,
+        "rekor2-timestamp-with-expired-cert-chain" => ok,
+        "rekor2-timestamp-with-incorrect-time_fail" => {chain, {expired_or_not_yet_valid, 0}},
+        "rekor2-timestamp-without-embedded-cert" => ok,
         "set-invalid-signature_fail" => {tlog, invalid_set},
         "signature-mismatch_fail" => {tlog, {body, {mismatch, signature}}},
         "trust-root-tlog-missing-validity-start_fail" => {trust, {valid_for, missing_start}},
         "trust-root-tlog-validity-end-inclusive" => ok,
-        "trust-root-tsa-validity-end-inclusive" => {verify, {incomplete, [tsa]}},
+        "trust-root-tsa-validity-end-inclusive" => ok,
         "wrong-hashedrekord-artifact_fail" => {tlog, {body, {mismatch, signature}}},
         "wrong-hashedrekord-cert-and-sig_fail" => {tlog, {body, {mismatch, signature}}},
         "wrong-hashedrekord-entry_fail" => {tlog, {body, {mismatch, signature}}},

@@ -23,6 +23,7 @@ sigstore_sct.erl
 sigstore_sign.erl
 sigstore_time.erl
 sigstore_tlog.erl
+sigstore_tsa.erl
 sigstore_trust.erl
 sigstore_trust_embedded.erl
 sigstore_verify.erl
@@ -47,6 +48,7 @@ sigstore_sct
 sigstore_sign
 sigstore_time
 sigstore_tlog
+sigstore_tsa
 sigstore_trust
 sigstore_verify
 sigstore_x509

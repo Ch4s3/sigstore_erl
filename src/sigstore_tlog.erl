@@ -16,18 +16,22 @@
     version := sigstore_bundle:version()
 }.
 
-%% @doc Returns the verified integrated time (Rekor v1 with a valid SET),
-%% or `undefined' when the entry provides no signed time.
+%% @doc On success returns the verified integrated time (Rekor v1 with a
+%% valid SET) or `undefined', plus the validity range of the log key used.
+%% When `time' is `undefined' the caller must check `valid_for' against
+%% the verified TSA times.
 -spec verify_entry(sigstore_bundle:tlog_entry(), ctx()) ->
-    {ok, sigstore_time:t() | undefined} | {error, {tlog, term()}}.
+    {ok, #{time := sigstore_time:t() | undefined, valid_for := sigstore_time:range()}}
+    | {error, {tlog, term()}}.
 verify_entry(#{kind_version := {<<"intoto">>, _}}, _Ctx) ->
     %% Deprecated Rekor v1 type; not verified (SPEC Q7, as sigstore-python).
     {error, {tlog, {unsupported_entry, intoto}}};
 verify_entry(Entry, #{root := Root} = Ctx) ->
     #{log_id := LogId, integrated_time := IT, inclusion_promise := SET, kind_version := {_, KV}} =
         Entry,
-    %% Rekor v1 key validity is checked at the (claimed, then SET-verified)
-    %% integrated time. v2 entries only have TSA time, checked in M4.
+    %% With a SET, key validity is checked at the (claimed, then verified)
+    %% integrated time. Otherwise the caller checks the returned range
+    %% against the verified TSA times.
     Logs =
         case {SET, KV} of
             {undefined, _} -> sigstore_trust:tlogs_matching(Root, LogId);
@@ -47,10 +51,10 @@ first_ok([F | Rest]) ->
         {error, _} -> first_ok(Rest)
     end.
 
-with_log(Entry, #{key := Key}, Ctx) ->
+with_log(Entry, #{key := Key, valid_for := Range}, Ctx) ->
     bind(proof(Entry, Key, Ctx), fun(_) ->
         bind(set(Entry, Key), fun(Time) ->
-            bind(body(Entry, Ctx), fun(_) -> {ok, Time} end)
+            bind(body(Entry, Ctx), fun(_) -> {ok, #{time => Time, valid_for => Range}} end)
         end)
     end).
 

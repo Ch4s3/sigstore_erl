@@ -1,12 +1,18 @@
 %% @doc The verification procedure (SPEC.md §6), in client-spec order.
 %%
-%% Milestone status: RFC 3161 (M4) is not implemented, so a bundle carrying
-%% timestamps ends with `{error, {verify, {incomplete, [tsa]}}}' after every
-%% other step has passed; it never returns `{ok, _}' while anything is
-%% pending. Signed times come only from verified SETs until M4.
+%% Signed times come from verified SETs (Rekor v1) and verified RFC 3161
+%% timestamps; the certificate chain must hold at every one of them. The
+%% tlog step runs first because a SET must verify before its integrated
+%% time counts.
 -module(sigstore_verify).
 
 -export([verify/5]).
+
+-ifdef(TEST).
+%% Lets tests exercise the signature step with synthetic keys, which cannot
+%% otherwise reach it without a real log entry or timestamp.
+-export([signature/1]).
+-endif.
 
 -spec verify(
     sigstore:artifact(),
@@ -34,6 +40,7 @@ verify(Artifact, Bundle, Root, Policy, Opts) ->
         [
             fun material/1,
             fun tlog/1,
+            fun tsa/1,
             fun signed_times/1,
             fun chain/1,
             fun sct/1,
@@ -52,7 +59,7 @@ run([Step | Rest], Ctx) ->
         {error, _} = E -> E
     end.
 
-%%% Step 0: signing material vs policy.
+%%% Signing material vs policy.
 
 material(#{bundle := #{material := {public_key, _}}, policy := {key, Key}} = Ctx) ->
     {ok, Ctx#{key => Key, leaf => undefined}};
@@ -74,38 +81,51 @@ material(#{bundle := #{material := Mat}} = Ctx) ->
         end)
     end).
 
-%%% Tlog entries (client spec step 5, run first: a SET must verify before
-%%% its integrated time counts as a signed time).
+%%% Tlog entries: checkpoint, inclusion proof, SET, body cross-check.
 
 tlog(#{bundle := #{tlog_entries := Es, content := C, version := V}} = Ctx) ->
     TCtx = maps:with([root, key, leaf, artifact, config], Ctx),
     Results = [sigstore_tlog:verify_entry(E, TCtx#{content => C, version => V}) || E <- Es],
     case [E || {error, E} <- Results] of
-        [] -> {ok, Ctx#{tlog_times => [T || {ok, T} <- Results, T =/= undefined]}};
+        [] -> {ok, Ctx#{tlog_results => [R || {ok, R} <- Results]}};
         [E | _] -> {error, E}
     end.
 
-%%% Signed times: integrated times from verified SETs; TSA times in M4.
+%%% RFC 3161 timestamps over the signature bytes.
 
-signed_times(#{bundle := #{rfc3161_timestamps := TS}, tlog_times := Times, now := Now} = Ctx) ->
-    case [T || T <- Times, T > Now] of
-        [_ | _] ->
-            {error, {time, integrated_time_in_future}};
-        [] ->
-            Pending = [tsa || TS =/= []],
-            case {Times, Pending} of
-                {[], []} -> {error, {time, no_verified_time}};
-                _ -> {ok, Ctx#{times => Times, pending => Pending}}
-            end
+tsa(#{bundle := #{rfc3161_timestamps := TS, content := C}, root := Root} = Ctx) ->
+    Signed =
+        case C of
+            {message_signature, #{signature := S}} -> S;
+            {dsse_envelope, #{signatures := [#{sig := S}]}} -> S
+        end,
+    Results = [sigstore_tsa:verify(T, Signed, Root) || T <- TS],
+    case [E || {error, E} <- Results] of
+        [] -> {ok, Ctx#{tsa_times => [T || {ok, T} <- Results]}};
+        [E | _] -> {error, E}
     end.
 
-%%% Step 2: chain to a trust-root CA at every signed time.
+%%% Signed times. An entry without a verified SET (Rekor v2, or v1 without
+%%% a promise) must have been logged under a key valid at every TSA time.
+
+signed_times(#{tlog_results := TR, tsa_times := TsaTimes, now := Now} = Ctx) ->
+    SetTimes = [T || #{time := T} <- TR, T =/= undefined],
+    Unbound = [R || #{time := undefined, valid_for := R} <- TR],
+    Times = SetTimes ++ TsaTimes,
+    Future = [T || T <- Times, T > Now],
+    OutOfRange = [R || R <- Unbound, T <- TsaTimes, not sigstore_time:in_range(T, R)],
+    if
+        Times =:= [] -> {error, {time, no_verified_time}};
+        Future =/= [] -> {error, {time, signed_time_in_future}};
+        Unbound =/= [], TsaTimes =:= [] -> {error, {time, no_time_for_log_key}};
+        OutOfRange =/= [] -> {error, {tlog, key_not_valid_at_signed_time}};
+        true -> {ok, Ctx#{times => Times, set_times => SetTimes}}
+    end.
+
+%%% Chain to a trust-root CA at every signed time.
 
 chain(#{leaf := undefined} = Ctx) ->
     {ok, Ctx};
-chain(#{times := []} = Ctx) ->
-    %% Only TSA times (M4) exist: nothing to validate against yet.
-    {ok, Ctx#{path => undefined}};
 chain(#{leaf := Leaf, extra := Extra, root := Root, times := Times} = Ctx) ->
     Paths = [
         begin
@@ -122,21 +142,19 @@ chain(#{leaf := Leaf, extra := Extra, root := Root, times := Times} = Ctx) ->
 anchors(#{cert_chain := Chain}) ->
     {lists:last(Chain), lists:droplast(Chain)}.
 
-%%% Step 3: embedded SCT.
+%%% Embedded SCT.
 
 sct(#{leaf := undefined} = Ctx) ->
-    {ok, Ctx};
-sct(#{path := undefined} = Ctx) ->
     {ok, Ctx};
 sct(#{leaf := Leaf, path := Path, root := Root} = Ctx) ->
     ok_ctx(sigstore_sct:verify_embedded(Leaf, Path, Root), Ctx).
 
-%%% Step 4: identity policy.
+%%% Identity policy.
 
 policy(#{leaf := undefined} = Ctx) -> {ok, Ctx};
 policy(#{leaf := Leaf, policy := P} = Ctx) -> ok_ctx(sigstore_policy:check(P, Leaf), Ctx).
 
-%%% Step 7 (run early while 5 and 6 are pending): the signature itself.
+%%% The signature itself.
 
 signature(#{bundle := #{content := {message_signature, MS}}, key := Key, artifact := A} = Ctx) ->
     #{signature := Sig, message_digest := MD} = MS,
@@ -226,11 +244,9 @@ safe_verify(Msg, Hash, Sig, #{public_key := K}) ->
         _:_ -> false
     end.
 
-%%% Terminal step: success only when nothing is pending.
+%%% Terminal step.
 
-finish(#{pending := [_ | _] = Pending}) ->
-    {error, {verify, {incomplete, Pending}}};
-finish(#{pending := [], leaf := Leaf, times := Times} = Ctx) ->
+finish(#{leaf := Leaf, set_times := SetTimes, tsa_times := TsaTimes} = Ctx) ->
     {Identity, Issuer} =
         case Leaf of
             undefined ->
@@ -248,7 +264,7 @@ finish(#{pending := [], leaf := Leaf, times := Times} = Ctx) ->
             end,
         identity => Identity,
         issuer => Issuer,
-        signed_times => [{tlog, T} || T <- Times],
+        signed_times => [{tlog, T} || T <- SetTimes] ++ [{tsa, T} || T <- TsaTimes],
         statement => maps:get(statement, Ctx, undefined)
     }}.
 
