@@ -18,3 +18,7 @@
 -define(OID_FULCIO(N), {1, 3, 6, 1, 4, 1, 57264, 1, N}).
 -define(OID_KP_CODE_SIGNING, {1, 3, 6, 1, 5, 5, 7, 3, 3}).
 -define(OID_KP_TIME_STAMPING, {1, 3, 6, 1, 5, 5, 7, 3, 8}).
+
+%% Library version, for the User-Agent (application metadata may be absent
+%% when vendored).
+-define(SIGSTORE_ERL_VERSION, "0.1.0").

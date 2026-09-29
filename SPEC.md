@@ -540,13 +540,10 @@ staleness risk of the embedded snapshot (e.g. new Rekor shards).
 
 ### 8.2 HTTP (`sigstore_http` behaviour, `sigstore_http_httpc` adapter)
 
-Same shape as `hex_http`: `request(Method, URI, Headers, Body, AdapterConfig)`
-selected via `#{http_adapter => {Mod, Cfg}}` in the config map. Default
-adapter is `httpc` with a private profile; `ssl` options: `verify_peer`,
-`cacerts => public_key:cacerts_get()`, `customize_hostname_check` with
-`public_key:pkix_verify_hostname_match_fun(https)`, `server_name_indication`,
-TLS 1.2+; connect/recv timeouts; JSON and binary bodies; 2 retries on 5xx.
-Tests plug a stub adapter to fake Fulcio/Rekor/TSA.
+Decided in docs/plans/M5.md step 1. The adapter callback is byte-for-byte
+hex_core's `request/5`, so hex passes `#{http_adapter => {Mod, Cfg}}` with
+its own adapter. The shared layer owns User-Agent, JSON, and retries. The
+default `httpc` adapter enforces verified TLS and never starts applications.
 
 ### 8.3 JCS (`sigstore_jcs`)
 

@@ -24,6 +24,9 @@
 
 -spec main([string()]) -> no_return().
 main(Args) ->
+    %% The library never starts applications; the escript host does.
+    {ok, _} = application:ensure_all_started(inets),
+    {ok, _} = application:ensure_all_started(ssl),
     case parse_args(Args) of
         {ok, Cmd} ->
             case run(Cmd) of

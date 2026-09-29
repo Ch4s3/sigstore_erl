@@ -10,7 +10,10 @@
 
 %% Config map threaded through every function, like `hex_core:config()'.
 -type config() :: #{
-    json_adapter => sigstore_json:adapter()
+    json_adapter => sigstore_json:adapter(),
+    http_adapter => {module(), map()},
+    %% Extra attempts for retryable failures (see sigstore_http:retry()).
+    http_retries => non_neg_integer()
 }.
 
 -type artifact() ::
@@ -55,7 +58,10 @@
 %% @doc Default configuration: OTP `json' adapter (OTP 27+).
 -spec default_config() -> config().
 default_config() ->
-    #{json_adapter => sigstore_json:default_adapter()}.
+    #{
+        json_adapter => sigstore_json:default_adapter(),
+        http_adapter => sigstore_http:default_adapter()
+    }.
 
 %% @doc Verify `Bundle' (JSON binary or parsed bundle) over `Artifact' offline.
 -spec verify(artifact(), binary() | sigstore_bundle:t(), verify_opts()) ->

@@ -10,6 +10,8 @@ sigstore_artifact.erl
 sigstore_b64.erl
 sigstore_der.erl
 sigstore_dsse.erl
+sigstore_http.erl
+sigstore_http_httpc.erl
 sigstore_intoto.erl
 sigstore_bundle.erl
 sigstore_checkpoint.erl
@@ -36,6 +38,7 @@ sigstore_artifact
 sigstore_b64
 sigstore_der
 sigstore_dsse
+sigstore_http
 sigstore_intoto
 sigstore_bundle
 sigstore_checkpoint
