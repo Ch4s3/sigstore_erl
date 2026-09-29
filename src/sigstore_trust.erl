@@ -15,6 +15,7 @@
     trusted_root_from_map/1,
     signing_config_from_map/1,
     tlogs_for/3,
+    tlogs_matching/2,
     ctlogs_for/3,
     cas_at/2,
     tsas/1,
@@ -237,6 +238,13 @@ selector(Other) ->
 %% validity covers `T'.
 -spec tlogs_for(trusted_root(), binary(), sigstore_time:t()) -> [log()].
 tlogs_for(#{tlogs := Logs}, KeyId, T) -> logs_for(Logs, KeyId, T).
+
+%% @doc Tlogs matching `KeyId' regardless of validity. Only for entries
+%% whose signed time is not yet known (Rekor v2 before its TSA time is
+%% verified); callers must check validity once the time is known.
+-spec tlogs_matching(trusted_root(), binary()) -> [log()].
+tlogs_matching(#{tlogs := Logs}, KeyId) ->
+    [L || #{log_id := Id, checkpoint_key_id := CK} = L <- Logs, Id =:= KeyId orelse CK =:= KeyId].
 
 -spec ctlogs_for(trusted_root(), binary(), sigstore_time:t()) -> [log()].
 ctlogs_for(#{ctlogs := Logs}, KeyId, T) -> logs_for(Logs, KeyId, T).

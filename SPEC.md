@@ -1,6 +1,6 @@
 # sigstore_erl — a dependency-free Sigstore client for Erlang/OTP
 
-Status: DRAFT v0.1. M0-M2 done (skeleton, data models, certificates/SCT/policy/signatures); see docs/plans/. Verification cannot succeed yet: it ends in `{error, {verify, {incomplete, Pending}}}` until M3 (tlog) and M4 (TSA) land.
+Status: DRAFT v0.1. M0-M3 done; see docs/plans/. Bundles without RFC 3161 timestamps verify end to end; bundles carrying timestamps end in `{error, {verify, {incomplete, [tsa]}}}` until M4.
 
 ## 0. Why
 
@@ -447,6 +447,9 @@ Repeat for every T in signed times; any failure fails
 
 ### 6.6 Signature
 
+- Prehash algorithm = the declared `messageDigest.algorithm` when present,
+  else the key's default. ECDSA does not bind hash to curve: CPython
+  releases pair P-384 keys with SHA-256 digests.
 - hashedrekord: `D = SHA-256(artifact)` or the given digest; if
   `messageDigest` present it must equal D (informational only:
   `message-digest-mismatch_fail`); `public_key:verify({digest, D}, sha256, Sig, Key)`
@@ -458,10 +461,10 @@ Repeat for every T in signed times; any failure fails
 
 ### 6.6a Milestone gating
 
-Until every step exists, `sigstore_verify` ends with
-`{error, {verify, {incomplete, [tlog | tsa]}}}` after all implemented steps
-pass, and never returns `{ok, _}`. Before M3, chain validation uses the
-entry's *claimed* integrated time; M3 turns it into a verified time.
+Until every step exists, a bundle needing an unimplemented step ends with
+`{error, {verify, {incomplete, Pending}}}` after all implemented steps pass,
+and never returns `{ok, _}`. Since M3 the tlog step runs before signed
+times: an integrated time counts only after its SET verifies.
 
 ### 6.7 Result
 
@@ -701,6 +704,7 @@ Decided:
 - D5. Follow the conformance suite where it is stricter than the client spec (root cert in chain ⇒ reject).
 - D6. `tlogEntries` must have exactly one entry in Layer 0.
 - D8. Vendoring constraints V1–V8 (§2a) are binding; OTP floor 25; config-map + `http_adapter`/`json_adapter` behaviours mirroring hex_core.
+- D10. No `intoto 0.0.2` (deprecated Rekor v1) support: rejected at the tlog step; `intoto-with-custom-trust-root` is a permanent xfail (resolves Q7; matches sigstore-python).
 - D9. JSON decode is pluggable with OTP 27 `json` as default (§8.5); no codec shipped; all encoding via own `sigstore_jcs`.
 - D7. SCT precert TBS is rebuilt via OTP `plain` record round-trip; proven byte-faithful on real Fulcio certs (§6.3). No DER-splice fallback needed.
 
@@ -708,5 +712,4 @@ Open:
 - Q3. Embedded trust-root refresh policy before TUF (M6) lands: ship a snapshot per release, warn if older than N days.
 - Q4. Package name on hex: `sigstore` (unclaimed as of writing — check) vs `sigstore_erl`.
 - Q5. Should the escript be shipped in the hex package (handy `sigstore verify` CLI) or stay CI-only?
-- Q7. Support deprecated Rekor v1 `intoto 0.0.2` entries (six v0.2 fixtures, one happy path `intoto-with-custom-trust-root`) or xfail them permanently as the conformance README suggests? Decide in M3.
 - Q6. Threshold verification across multiple Rekor operators (v2 future) — API shape reserves `signed_times`/`log_entries` lists for it.

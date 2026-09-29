@@ -1,11 +1,9 @@
 %% @doc The verification procedure (SPEC.md §6), in client-spec order.
 %%
-%% Milestone status: transparency-log (M3) and RFC 3161 (M4) checks are not
-%% implemented, so the pipeline currently ends with
-%% `{error, {verify, {incomplete, Pending}}}' after every implemented step
-%% has passed. It never returns `{ok, _}' until nothing is pending. Times
-%% used for chain validation are the entries' CLAIMED integrated times until
-%% M3 verifies them.
+%% Milestone status: RFC 3161 (M4) is not implemented, so a bundle carrying
+%% timestamps ends with `{error, {verify, {incomplete, [tsa]}}}' after every
+%% other step has passed; it never returns `{ok, _}' while anything is
+%% pending. Signed times come only from verified SETs until M4.
 -module(sigstore_verify).
 
 -export([verify/5]).
@@ -35,6 +33,7 @@ verify(Artifact, Bundle, Root, Policy, Opts) ->
     run(
         [
             fun material/1,
+            fun tlog/1,
             fun signed_times/1,
             fun chain/1,
             fun sct/1,
@@ -75,21 +74,29 @@ material(#{bundle := #{material := Mat}} = Ctx) ->
         end)
     end).
 
-%%% Step 1: signed times. M2: claimed integrated times of Rekor v1 entries
-%%% carrying a SET (verified in M3); TSA times arrive in M4.
+%%% Tlog entries (client spec step 5, run first: a SET must verify before
+%%% its integrated time counts as a signed time).
 
-signed_times(#{bundle := #{tlog_entries := Es, rfc3161_timestamps := TS}, now := Now} = Ctx) ->
-    %% Only Rekor v1 entries carry a SET; v2 integratedTime is always 0 and
-    %% MUST be ignored (client spec §4).
-    Claimed = [IT || #{integrated_time := IT, inclusion_promise := P} <- Es, P =/= undefined],
-    case [T || T <- Claimed, sigstore_time:from_unix_seconds(T) > Now] of
+tlog(#{bundle := #{tlog_entries := Es, content := C, version := V}} = Ctx) ->
+    TCtx = maps:with([root, key, leaf, artifact, config], Ctx),
+    Results = [sigstore_tlog:verify_entry(E, TCtx#{content => C, version => V}) || E <- Es],
+    case [E || {error, E} <- Results] of
+        [] -> {ok, Ctx#{tlog_times => [T || {ok, T} <- Results, T =/= undefined]}};
+        [E | _] -> {error, E}
+    end.
+
+%%% Signed times: integrated times from verified SETs; TSA times in M4.
+
+signed_times(#{bundle := #{rfc3161_timestamps := TS}, tlog_times := Times, now := Now} = Ctx) ->
+    case [T || T <- Times, T > Now] of
         [_ | _] ->
             {error, {time, integrated_time_in_future}};
         [] ->
-            Pending = [tlog] ++ [tsa || TS =/= []],
-            {ok, Ctx#{
-                times => [sigstore_time:from_unix_seconds(T) || T <- Claimed], pending => Pending
-            }}
+            Pending = [tsa || TS =/= []],
+            case {Times, Pending} of
+                {[], []} -> {error, {time, no_verified_time}};
+                _ -> {ok, Ctx#{times => Times, pending => Pending}}
+            end
     end.
 
 %%% Step 2: chain to a trust-root CA at every signed time.
@@ -134,14 +141,17 @@ policy(#{leaf := Leaf, policy := P} = Ctx) -> ok_ctx(sigstore_policy:check(P, Le
 signature(#{bundle := #{content := {message_signature, MS}}, key := Key, artifact := A} = Ctx) ->
     #{signature := Sig, message_digest := MD} = MS,
     bind(check_message_digest(MD, A), fun(_) ->
-        Hash = hash_for(Key),
+        %% ECDSA/RSA do not tie the hash to the key: a P-384 key may sign a
+        %% SHA-256 prehash (CPython releases do). Use the declared digest
+        %% algorithm, falling back to the key's default.
+        Hash = prehash_for(MD, Key),
         case Hash of
             none ->
-                bind(whole_message(A), fun(Msg) ->
+                bind(sigstore_artifact:whole(A), fun(Msg) ->
                     verified(safe_verify(Msg, none, Sig, Key), Ctx)
                 end);
             _ ->
-                bind(digest(A, Hash), fun(D) ->
+                bind(sigstore_artifact:digest(A, Hash), fun(D) ->
                     verified(safe_verify({digest, D}, Hash, Sig, Key), Ctx)
                 end)
         end
@@ -159,7 +169,7 @@ signature(
             {error, {signature, {unsupported_payload_type, Type}}};
         true ->
             bind(sigstore_intoto:parse(Config, Payload), fun(Statement) ->
-                bind(digest(A, sha256), fun(D) ->
+                bind(sigstore_artifact:digest(A, sha256), fun(D) ->
                     case sigstore_intoto:subject_matches(Statement, D) of
                         true -> {ok, Ctx#{statement => Statement}};
                         false -> {error, {signature, artifact_not_in_subjects}}
@@ -180,7 +190,7 @@ check_message_digest(#{algorithm := Alg, digest := Want}, A) ->
             {error, {signature, {unsupported_digest_algorithm, Alg}}};
         H ->
             %% A fun head would shadow Want, not match it: compare explicitly.
-            bind(digest(A, H), fun
+            bind(sigstore_artifact:digest(A, H), fun
                 (Got) when Got =:= Want -> {ok, match};
                 (_) -> {error, {signature, message_digest_mismatch}}
             end)
@@ -190,6 +200,15 @@ hash_name(<<"SHA2_256">>) -> sha256;
 hash_name(<<"SHA2_384">>) -> sha384;
 hash_name(<<"SHA2_512">>) -> sha512;
 hash_name(_) -> undefined.
+
+prehash_for(#{algorithm := Alg}, Key) ->
+    case {hash_for(Key), hash_name(Alg)} of
+        {none, _} -> none;
+        {Default, undefined} -> Default;
+        {_, H} -> H
+    end;
+prehash_for(undefined, Key) ->
+    hash_for(Key).
 
 hash_for(Key) ->
     case sigstore_keys:alg(Key) of
@@ -207,47 +226,31 @@ safe_verify(Msg, Hash, Sig, #{public_key := K}) ->
         _:_ -> false
     end.
 
-%%% Terminal step: report what is still unimplemented.
+%%% Terminal step: success only when nothing is pending.
 
-finish(#{pending := Pending}) -> {error, {verify, {incomplete, Pending}}}.
-
-%%% Artifact digests.
-
--spec digest(sigstore:artifact(), sha256 | sha384 | sha512) ->
-    {ok, binary()} | {error, {artifact, term()}}.
-digest({digest, H, D}, H) -> {ok, D};
-digest({digest, Have, _}, Want) -> {error, {artifact, {digest_algorithm, Have, Want}}};
-digest({binary, B}, H) -> {ok, crypto:hash(H, B)};
-digest({file, Path}, H) -> hash_file(Path, H).
-
-whole_message({binary, B}) ->
-    {ok, B};
-whole_message({file, P}) ->
-    case file:read_file(P) of
-        {ok, B} -> {ok, B};
-        {error, R} -> {error, {artifact, {read, P, R}}}
-    end;
-whole_message({digest, _, _}) ->
-    {error, {artifact, prehashed_input_needs_prehash_algorithm}}.
-
-hash_file(Path, H) ->
-    case file:open(Path, [read, binary, raw]) of
-        {ok, F} ->
-            try
-                hash_loop(F, crypto:hash_init(H))
-            after
-                ok = file:close(F)
-            end;
-        {error, R} ->
-            {error, {artifact, {read, Path, R}}}
-    end.
-
-hash_loop(F, Ctx) ->
-    case file:read(F, 1 bsl 16) of
-        {ok, Chunk} -> hash_loop(F, crypto:hash_update(Ctx, Chunk));
-        eof -> {ok, crypto:hash_final(Ctx)};
-        {error, R} -> {error, {artifact, {read, R}}}
-    end.
+finish(#{pending := [_ | _] = Pending}) ->
+    {error, {verify, {incomplete, Pending}}};
+finish(#{pending := [], leaf := Leaf, times := Times} = Ctx) ->
+    {Identity, Issuer} =
+        case Leaf of
+            undefined ->
+                {undefined, undefined};
+            _ ->
+                {ok, {_, Id}} = sigstore_x509:san(Leaf),
+                {ok, Iss} = sigstore_x509:issuer(Leaf),
+                {Id, Iss}
+        end,
+    {ok, #{
+        certificate =>
+            case Leaf of
+                undefined -> undefined;
+                #{der := D} -> D
+            end,
+        identity => Identity,
+        issuer => Issuer,
+        signed_times => [{tlog, T} || T <- Times],
+        statement => maps:get(statement, Ctx, undefined)
+    }}.
 
 %%% Helpers.
 

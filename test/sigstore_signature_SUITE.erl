@@ -11,6 +11,7 @@
     ed25519_needs_whole_message/1,
     sct_list_parse/1
 ]).
+-export([p384_key_sha256_prehash/1, cpython_release_bundle/1]).
 
 all() ->
     [
@@ -18,7 +19,9 @@ all() ->
         intoto_subjects,
         digest_inputs_agree,
         ed25519_needs_whole_message,
-        sct_list_parse
+        sct_list_parse,
+        p384_key_sha256_prehash,
+        cpython_release_bundle
     ].
 
 %% Test vector from the DSSE v1 protocol spec.
@@ -62,14 +65,24 @@ digest_inputs_agree(_) ->
             <<"https://token.actions.githubusercontent.com">>
         )
     },
-    Expected = {error, {verify, {incomplete, [tlog]}}},
-    ?assertEqual(Expected, sigstore:verify({file, Art}, Bundle, Opts)),
-    ?assertEqual(Expected, sigstore:verify({binary, Bytes}, Bundle, Opts)),
-    ?assertEqual(
-        Expected, sigstore:verify({digest, sha256, crypto:hash(sha256, Bytes)}, Bundle, Opts)
+    {ok, Verified} = sigstore:verify({file, Art}, Bundle, Opts),
+    ?assertMatch(
+        #{
+            identity := <<"https://github.com/sigstore-conformance/", _/binary>>,
+            issuer := <<"https://token.actions.githubusercontent.com">>,
+            signed_times := [{tlog, _}],
+            certificate := <<16#30, _/binary>>
+        },
+        Verified
     ),
+    ?assertEqual({ok, Verified}, sigstore:verify({binary, Bytes}, Bundle, Opts)),
     ?assertEqual(
-        {error, {signature, message_digest_mismatch}},
+        {ok, Verified},
+        sigstore:verify({digest, sha256, crypto:hash(sha256, Bytes)}, Bundle, Opts)
+    ),
+    %% A different artifact is caught by the logged body before the signature.
+    ?assertEqual(
+        {error, {tlog, {body, {mismatch, artifact_digest}}}},
         sigstore:verify({binary, <<Bytes/binary, "x">>}, Bundle, Opts)
     ),
     ?assertMatch(
@@ -77,7 +90,9 @@ digest_inputs_agree(_) ->
         sigstore:verify({file, "/nonexistent"}, Bundle, Opts)
     ).
 
-%% Managed-key bundles signed with freshly generated keys: the verifier
+%% Managed-key bundles signed with freshly generated keys (no tlog entry;
+%% a placeholder TSA token keeps the pipeline at `incomplete [tsa]' so the
+%% signature step runs): the verifier
 %% must pick the hash by key algorithm (Ed25519 signs the whole message,
 %% P-384 needs SHA-384, so a SHA-256 prehash input cannot work for either).
 ed25519_needs_whole_message(_) ->
@@ -90,7 +105,7 @@ ed25519_needs_whole_message(_) ->
             Sig = public_key:sign(Msg, SignHash, Priv),
             Check = fun(Artifact, S) -> managed(Key, S, Artifact) end,
             ?assertEqual(
-                {Alg, {error, {verify, {incomplete, [tlog]}}}}, {Alg, Check({binary, Msg}, Sig)}
+                {Alg, {error, {verify, {incomplete, [tsa]}}}}, {Alg, Check({binary, Msg}, Sig)}
             ),
             ?assertEqual(
                 {Alg, {error, {signature, invalid}}},
@@ -113,7 +128,7 @@ managed(Key, Sig, Artifact) ->
         version => v0_3,
         material => {public_key, <<>>},
         tlog_entries => [],
-        rfc3161_timestamps => [],
+        rfc3161_timestamps => [<<"placeholder">>],
         content => {message_signature, #{signature => Sig, message_digest => undefined}}
     },
     sigstore:verify(Artifact, Bundle, #{
@@ -139,4 +154,66 @@ sct_list_parse(_) ->
             1,
             (binary:part(Sct, 1, byte_size(Sct) - 1))/binary
         >>)
+    ).
+
+%% ECDSA does not bind hash to curve: a P-384 key signing a SHA-256
+%% prehash is valid when the bundle declares SHA2_256 (CPython releases).
+p384_key_sha256_prehash(_) ->
+    Msg = <<"release tarball">>,
+    D = crypto:hash(sha256, Msg),
+    Priv = public_key:generate_key({namedCurve, secp384r1}),
+    Pub = {#'ECPoint'{point = Priv#'ECPrivateKey'.publicKey}, {namedCurve, ?'secp384r1'}},
+    Key = #{alg => ecdsa_p384_sha384, public_key => Pub, spki => <<>>},
+    Sig = public_key:sign({digest, D}, sha256, Priv),
+    Bundle = fun(MD) ->
+        #{
+            media_type => <<"application/vnd.dev.sigstore.bundle.v0.3+json">>,
+            version => v0_3,
+            material => {public_key, <<>>},
+            tlog_entries => [],
+            rfc3161_timestamps => [<<"placeholder">>],
+            content => {message_signature, #{signature => Sig, message_digest => MD}}
+        }
+    end,
+    Opts = #{
+        config => sigstore_test_json:config(),
+        trusted_root => #{},
+        policy => sigstore_policy:key(Key)
+    },
+    Declared = #{algorithm => <<"SHA2_256">>, digest => D},
+    ?assertEqual(
+        {error, {verify, {incomplete, [tsa]}}},
+        sigstore:verify({digest, sha256, D}, Bundle(Declared), Opts)
+    ),
+    ?assertEqual(
+        {error, {verify, {incomplete, [tsa]}}},
+        sigstore:verify({binary, Msg}, Bundle(Declared), Opts)
+    ),
+    %% Without a declared digest the key default (SHA-384) applies.
+    ?assertEqual(
+        {error, {signature, invalid}}, sigstore:verify({binary, Msg}, Bundle(undefined), Opts)
+    ).
+
+%% A real CPython 3.11.6 release bundle (P-384 key, SHA-256 digest,
+%% bundle v0.1, Google-issued identity) verifies end to end.
+cpython_release_bundle(_) ->
+    Bundle = sigstore_test_util:read_vector("cpython/3.11.6.sigstore.json"),
+    {ok, #{<<"sha256">> := Hex, <<"identity">> := Id, <<"issuer">> := Iss}} =
+        sigstore_json:decode(
+            sigstore_test_json:config(),
+            sigstore_test_util:read_vector("cpython/3.11.6.expect.json")
+        ),
+    {ok, Root} = sigstore:trusted_root(#{config => sigstore_test_json:config()}),
+    Opts = #{
+        config => sigstore_test_json:config(),
+        trusted_root => Root,
+        policy => sigstore_policy:identity(Id, Iss)
+    },
+    {ok, D} = sigstore_b64:hex_decode(Hex),
+    ?assertMatch(
+        {ok, #{identity := Id, issuer := Iss}}, sigstore:verify({digest, sha256, D}, Bundle, Opts)
+    ),
+    <<B, Rest/binary>> = D,
+    ?assertMatch(
+        {error, _}, sigstore:verify({digest, sha256, <<(B bxor 1), Rest/binary>>}, Bundle, Opts)
     ).

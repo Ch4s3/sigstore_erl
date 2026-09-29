@@ -22,9 +22,6 @@
         input := {file, file:name_all()} | {digest, sha256, binary()}
     }}.
 
-%% Until M2/M5, run/1 can only ever return errors; drop this when it can succeed.
--dialyzer({nowarn_function, [main/1, run/1]}).
-
 -spec main([string()]) -> no_return().
 main(Args) ->
     case parse_args(Args) of
