@@ -20,7 +20,10 @@ parse_rfc3339(Bin) when is_binary(Bin) ->
 parse_rfc3339(Other) ->
     {error, {time, {invalid, Other}}}.
 
+%% @doc Whole seconds print without a fraction.
 -spec to_rfc3339(t()) -> binary().
+to_rfc3339(T) when T rem 1000000 =:= 0 ->
+    list_to_binary(calendar:system_time_to_rfc3339(T div 1000000, [{unit, second}, {offset, "Z"}]));
 to_rfc3339(T) ->
     list_to_binary(calendar:system_time_to_rfc3339(T, [{unit, microsecond}, {offset, "Z"}])).
 

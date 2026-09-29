@@ -1,6 +1,6 @@
 # sigstore_erl — a dependency-free Sigstore client for Erlang/OTP
 
-Status: DRAFT v0.1. M0 (skeleton, CI) and M1 (data models, structural validation) done; see docs/plans/M1.md. No cryptographic verification yet.
+Status: DRAFT v0.1. M0-M2 done (skeleton, data models, certificates/SCT/policy/signatures); see docs/plans/. Verification cannot succeed yet: it ends in `{error, {verify, {incomplete, Pending}}}` until M3 (tlog) and M4 (TSA) land.
 
 ## 0. Why
 
@@ -401,6 +401,7 @@ Repeat for every T in signed times; any failure fails
 ### 6.4 Policy (`sigstore_policy`)
 
 - Identity: SAN rfc822Name | URI | otherName(`1.3.6.1.4.1.57264.1.7`, UTF8String) == expected.
+  OTP's otherName record name changed across versions; match the 3-tuple by shape.
 - Issuer: `1.3.6.1.4.1.57264.1.8` (DER UTF8String) preferred; fall back to
   `.1.1` (raw bytes). Both must be parsed.
 - Extensions table for `.1.9`–`.1.24` (DER UTF8String) and deprecated `.1.2`–`.1.6` (raw).
@@ -454,6 +455,13 @@ Repeat for every T in signed times; any failure fails
   `application/vnd.in-toto+json`; parse Statement v1; artifact digest must
   appear in some `subject[].digest.sha256` (`dsse-invalid-sig_fail`,
   `rekor2-dsse-invalid-sig_fail`, `happy-path-intoto-in-dsse-v3`).
+
+### 6.6a Milestone gating
+
+Until every step exists, `sigstore_verify` ends with
+`{error, {verify, {incomplete, [tlog | tsa]}}}` after all implemented steps
+pass, and never returns `{ok, _}`. Before M3, chain validation uses the
+entry's *claimed* integrated time; M3 turns it into a verified time.
 
 ### 6.7 Result
 
